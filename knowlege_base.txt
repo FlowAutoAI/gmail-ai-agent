@@ -1,0 +1,57 @@
+Frequently Asked Questions (FAQ) & Policy: Lego Investment Tool
+
+---
+
+**What is the Lego Investment Tool?**
+The Lego Investment Tool is a completely FREE online resource designed to help users evaluate the investment potential of Lego sets. Simply enter or select a Lego set to see how it scores across a set of investment factors, aiding your decision making — whether you’re an avid collector or a curious investor.
+
+---
+
+**How Does It Work?**
+Our tool analyzes each set using a unique scoring system. We aggregate publicly available data and market trends, then apply a set of scoring factors (detailed below) to help you assess whether a Lego set could make a smart investment.
+
+---
+
+**Scoring Factors & Definitions**
+
+1. **Retirement Factor:**  
+   *Is it retiring soon?*  
+   Sets that are about to be retired by Lego are often more sought after and likely to increase in value.
+
+2. **Discount Factor:**  
+   *Current market price vs. RRP*  
+   Takes into account how much a set is selling for compared to its official Recommended Retail Price (RRP). Bigger discounts improve this score.
+
+3. **Theme Factor:**  
+   *Popularity of the theme*  
+   Based on demand and collectibility of the set’s Lego theme (e.g., Star Wars, Technic, Harry Potter).
+
+4. **Minifig Factor:**  
+   *Value of included figures*  
+   Assesses the value and uniqueness of any minifigures included in the set.
+
+5. **Scarcity Factor:**  
+   Evaluates how rare or difficult to find the set is on the current market.
+
+6. **Part Out Factor:**  
+   Considers the potential value of selling the set’s individual parts separately.
+
+7. **Mismatch Factor:**  
+   Highlights any inconsistencies or unique situations (such as unusual regional releases or packaging errors) that might affect the set’s value.
+
+---
+
+**Is the tool really free?**  
+Yes! The Lego Investment Tool is 100% free to use, with no subscriptions or payments required.
+
+---
+
+**Disclaimer:**  
+The Lego Investment Tool provides data-driven insights and opinions for informational purposes only. We do not guarantee any specific investment outcomes or returns. Always perform your own due diligence before making purchasing or investment decisions.
+
+---
+
+**How can I contact you?**  
+For all inquiries, suggestions, or support, please email us at:  
+bridgesbricks@gmail.com
+

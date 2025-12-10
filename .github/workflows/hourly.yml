@@ -1,34 +1,195 @@
-name: Run Gmail AI Agent
+import os.path
+import base64
+from email.message import EmailMessage
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from dotenv import load_dotenv
+import openai
 
-on:
-  schedule:
-    - cron: '0 * * * *'  # Runs at minute 0 of every hour
-  workflow_dispatch:      # Allows you to click a "Run Now" button to test it
+# Load environment variables
+load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
-jobs:
-  run-bot:
-    runs-on: ubuntu-latest
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/gmail.modify"
+]
 
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+def load_knowledge_base():
+    """Reads the policies from the text file."""
+    try:
+        with open("knowledge_base.txt", "r") as f:
+            return f.read()
+    except FileNotFoundError:
+        print("Error: knowledge_base.txt not found!")
+        return ""
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
+def get_email_body(msg_details):
+    """Extracts the full text body from the email payload."""
+    try:
+        payload = msg_details.get('payload', {})
+        parts = payload.get('parts', [])
+        body = ""
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        if 'data' in payload.get('body', {}):
+             data = payload['body']['data']
+             body = base64.urlsafe_b64decode(data).decode()
+        elif parts:
+            for part in parts:
+                if part.get('mimeType') == 'text/plain':
+                    data = part['body'].get('data', '')
+                    if data:
+                        body = base64.urlsafe_b64decode(data).decode()
+                        break
+        
+        if not body:
+            return msg_details.get('snippet', '')
+            
+        return body
+    except Exception as e:
+        print(f"Error reading body: {e}")
+        return msg_details.get('snippet', '')
 
-    - name: Recreate Secret Files
-      # We take the secrets you saved in GitHub and rebuild the files on the server
-      run: |
-        echo '${{ secrets.GMAIL_TOKEN_JSON }}' > token.json
-        echo '${{ secrets.GMAIL_CREDENTIALS_JSON }}' > credentials.json
-        echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" > .env
+def search_emails(service):
+    """Searches for emails using the user's specific query."""
+    try:
+        # Broad Search Query
+        query = '"BrickIntel" OR "Investment Tool" OR "Factor" OR "meeting" OR "part out" OR "confidence index" -label:AI_PROCESSED'
+        
+        results = service.users().messages().list(userId='me', q=query).execute()
+        messages = results.get('messages', [])
+        return messages
+    except HttpError as error:
+        print(f"An error occurred during search: {error}")
+        return None
 
-    - name: Run AI Agent
-      run: python gmail_bot.py
+def add_label(service, user_id, msg_id, label_name):
+    """Adds a label to an email to mark it as processed."""
+    try:
+        results = service.users().labels().list(userId=user_id).execute()
+        labels = results.get('labels', [])
+        label_id = next((l['id'] for l in labels if l['name'] == label_name), None)
+        
+        if not label_id:
+            label_object = {'name': label_name}
+            created_label = service.users().labels().create(userId=user_id, body=label_object).execute()
+            label_id = created_label['id']
+
+        body = {'addLabelIds': [label_id]}
+        service.users().messages().modify(userId=user_id, id=msg_id, body=body).execute()
+        print(f"SUCCESS: Label '{label_name}' added to email.")
+    except HttpError as error:
+        print(f"An error occurred adding label: {error}")
+
+def create_draft(service, user_id, thread_id, original_subject, email_content):
+    """Uses OpenAI to read the knowledge base and draft a reply."""
+    try:
+        knowledge_text = load_knowledge_base()
+        client = openai.OpenAI()
+        
+        # UPDATED PROMPT: Forces HTML and specific link format
+        system_prompt = f"""
+        You are the AI assistant for BridgesBricks. Use the Knowledge Base below to answer the user's email.
+        
+        FORMATTING RULES (HTML ONLY):
+        - Output the email in RAW HTML format.
+        - Do not use markdown blocks.
+        - Use <p> for paragraphs.
+        - Use <b> for bold text.
+        - Use <br> for line breaks.
+        
+        CRITICAL LINK INSTRUCTION:
+        - If you offer a meeting, you MUST use this exact HTML code:
+          <a href="https://calendly.com/bridges-jenica">Click here to book your 30-minute onboarding call</a>
+        
+        CONTENT INSTRUCTIONS:
+        1. Identify EVERY question the user asked.
+        2. Answer ALL questions found.
+        3. If asking about cost, clarify it is FREE.
+        
+        SIGNATURE:
+        <br><br>
+        Best regards,<br>
+        <b>Jenica</b><br>
+        BridgesBricks Team
+        <br><br>
+        <i>*Disclaimer: [Insert Disclaimer from text here]*</i>
+        
+        KNOWLEDGE BASE:
+        {knowledge_text}
+        """
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"The user wrote:\n{email_content}\n\nDraft a complete reply addressing every single point raised."}
+            ]
+        )
+        
+        draft_body = response.choices[0].message.content
+        
+        # Strip code blocks if GPT adds them accidentally
+        draft_body = draft_body.replace("```html", "").replace("```", "")
+
+        message = EmailMessage()
+        message["Subject"] = original_subject if original_subject.startswith("Re:") else f"Re: {original_subject}"
+        message["To"] = "recipient@example.com"
+        message["From"] = user_id
+        
+        # Set email type to HTML so the link becomes clickable
+        message.set_content(draft_body, subtype='html')
+        
+        encoded_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+        create_message = {'message': {'raw': encoded_message, 'threadId': thread_id}}
+        
+        draft = service.users().drafts().create(userId=user_id, body=create_message).execute()
+        print(f"SUCCESS! Draft created. ID: {draft['id']}")
+        return draft
+
+    except Exception as error:
+        print(f"An error occurred: {error}")
+        return None
+
+def main():
+    creds = None
+    if os.path.exists("token.json"):
+        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+    
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open("token.json", "w") as token:
+            token.write(creds.to_json())
+
+    try:
+        service = build("gmail", "v1", credentials=creds)
+
+        print("Searching for emails...")
+        found_messages = search_emails(service)
+
+        if found_messages:
+            for msg in found_messages:
+                msg_details = service.users().messages().get(userId='me', id=msg['id']).execute()
+                headers = msg_details['payload']['headers']
+                subject = next((h['value'] for h in headers if h['name'] == 'Subject'), "No Subject")
+                email_body = get_email_body(msg_details)
+
+                print(f"Found email: {subject}")
+                create_draft(service, 'me', msg['threadId'], subject, email_body)
+                add_label(service, 'me', msg['id'], 'AI_PROCESSED')
+        else:
+            print("No new emails found matching criteria.")
+        
+    except HttpError as error:
+        print(f"An error occurred: {error}")
+
+if __name__ == "__main__":
+    main()

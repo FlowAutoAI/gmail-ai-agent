@@ -1,0 +1,21 @@
+# BrickIntel Investment Tool - FAQ & Policies
+
+1. WHAT IS IT: An AI-driven analytics platform that predicts the resale value of Lego sets.
+
+2. ACCESS: This is a 100% FREE tool provided exclusively for subscribers of the BridgesBricks YouTube channel.
+
+3. SCORING FACTORS: The "Investment Confidence Score" (out of 100) is calculated using these weighted metrics:
+   - Retirement Factor (Is the set retiring soon?)
+   - Discount Factor (Current market price vs. RRP)
+   - Theme Factor (Historical popularity of the theme)
+   - Minifig Factor (Value of included figures vs. set price)
+   - Scarcity Factor (Is production limited or exclusive?)
+   - Part Out Factor (Total value of individual pieces if sold separately)
+   - Mismatch Factor (Is the set significantly undervalued vs. similar sets?)
+
+4. MEETINGS: We offer a 30-minute onboarding call to help new users get set up.
+   - LINK: https://calendly.com/bridges-jenica
+
+5. DISCLAIMER: We are NOT financial advisors or professional investors. All scores are estimates based on historical data. Invest at your own risk.
+
+6. CONTACT: Direct all inquiries to bridgesbricks@gmail.com.

@@ -9,7 +9,7 @@ from googleapiclient.errors import HttpError
 from dotenv import load_dotenv
 import openai
 
-# Load environment variables (API Keys)
+# Load environment variables
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
@@ -28,11 +28,38 @@ def load_knowledge_base():
         print("Error: knowledge_base.txt not found!")
         return ""
 
-def search_emails(service, query):
-    """Searches for emails matching the query."""
+def get_email_body(msg_details):
+    """Extracts the full text body from the email payload."""
     try:
-        # We exclude emails that already have the 'AI_PROCESSED' label
-        query += " -label:AI_PROCESSED"
+        payload = msg_details.get('payload', {})
+        parts = payload.get('parts', [])
+        body = ""
+
+        if 'data' in payload.get('body', {}):
+             data = payload['body']['data']
+             body = base64.urlsafe_b64decode(data).decode()
+        elif parts:
+            for part in parts:
+                if part.get('mimeType') == 'text/plain':
+                    data = part['body'].get('data', '')
+                    if data:
+                        body = base64.urlsafe_b64decode(data).decode()
+                        break
+        
+        if not body:
+            return msg_details.get('snippet', '')
+            
+        return body
+    except Exception as e:
+        print(f"Error reading body: {e}")
+        return msg_details.get('snippet', '')
+
+def search_emails(service):
+    """Searches for emails using the user's specific query."""
+    try:
+        # Broad Search Query
+        query = '"BrickIntel" OR "Investment Tool" OR "Factor" OR "meeting" OR "part out" OR "confidence index" -label:AI_PROCESSED'
+        
         results = service.users().messages().list(userId='me', q=query).execute()
         messages = results.get('messages', [])
         return messages
@@ -43,7 +70,6 @@ def search_emails(service, query):
 def add_label(service, user_id, msg_id, label_name):
     """Adds a label to an email to mark it as processed."""
     try:
-        # 1. Check if label exists, if not create it
         results = service.users().labels().list(userId=user_id).execute()
         labels = results.get('labels', [])
         label_id = next((l['id'] for l in labels if l['name'] == label_name), None)
@@ -53,7 +79,6 @@ def add_label(service, user_id, msg_id, label_name):
             created_label = service.users().labels().create(userId=user_id, body=label_object).execute()
             label_id = created_label['id']
 
-        # 2. Apply the label
         body = {'addLabelIds': [label_id]}
         service.users().messages().modify(userId=user_id, id=msg_id, body=body).execute()
         print(f"SUCCESS: Label '{label_name}' added to email.")
@@ -63,20 +88,37 @@ def add_label(service, user_id, msg_id, label_name):
 def create_draft(service, user_id, thread_id, original_subject, email_content):
     """Uses OpenAI to read the knowledge base and draft a reply."""
     try:
-        # 1. Read the Knowledge Base
         knowledge_text = load_knowledge_base()
-        
-        # 2. Ask OpenAI to write the email
         client = openai.OpenAI()
         
+        # UPDATED PROMPT: Asks for HTML format
         system_prompt = f"""
-        You are the AI assistant for BridgesBricks. Use the provided Knowledge Base below to answer the user's email accurately.
+        You are the AI assistant for BridgesBricks. Use the Knowledge Base below to answer the user's email.
         
-        GUIDELINES:
-        - If they ask about definitions (Scarcity, Part Out, Mismatch), define them exactly as written in the text.
-        - If they ask about cost/refunds, clearly state this is a FREE tool for subscribers.
-        - Always end with the Disclaimer from the text.
-        - Keep the tone enthusiastic, helpful, and professional.
+        FORMATTING INSTRUCTIONS:
+        - Output the email in RAW HTML format.
+        - Do NOT use markdown code blocks (like ```html). Just write the raw HTML tags.
+        - Use <p> for paragraphs.
+        - Use <br> for line breaks.
+        - Use <b> for bold text (like definitions).
+        - Use <a href="LINK">Clickable Text</a> for links.
+        
+        CONTENT INSTRUCTIONS:
+        1. Identify EVERY question the user asked.
+        2. Answer ALL questions found.
+        
+        SPECIFIC RESPONSES:
+        - If they ask for definitions, quote the definition from the text.
+        - If they ask for a meeting, offer the onboarding call AND include the Calendly Link as a clickable hyperlink.
+        - If they ask about cost, clarify it is FREE.
+        
+        SIGNATURE:
+        <br><br>
+        Best regards,<br>
+        <b>Jenica</b><br>
+        BridgesBricks Team
+        <br><br>
+        <i>*Disclaimer: [Insert Disclaimer from text here]*</i>
         
         KNOWLEDGE BASE:
         {knowledge_text}
@@ -86,30 +128,28 @@ def create_draft(service, user_id, thread_id, original_subject, email_content):
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"The user wrote: {email_content}\n\nDraft a reply."}
+                {"role": "user", "content": f"The user wrote:\n{email_content}\n\nDraft a complete reply addressing every single point raised."}
             ]
         )
         
         draft_body = response.choices[0].message.content
-
-        # 3. Create the Draft Object
-        message = EmailMessage()
-        message.set_content(draft_body)
         
-        if not original_subject.startswith("Re:"):
-            message["Subject"] = f"Re: {original_subject}"
-        else:
-            message["Subject"] = original_subject
+        # Strip code blocks if GPT adds them accidentally
+        draft_body = draft_body.replace("```html", "").replace("```", "")
 
+        message = EmailMessage()
+        message["Subject"] = original_subject if original_subject.startswith("Re:") else f"Re: {original_subject}"
         message["To"] = "recipient@example.com"
         message["From"] = user_id
+        
+        # IMPORTANT: Set content type to HTML
+        message.set_content(draft_body, subtype='html')
         
         encoded_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
         create_message = {'message': {'raw': encoded_message, 'threadId': thread_id}}
         
         draft = service.users().drafts().create(userId=user_id, body=create_message).execute()
         print(f"SUCCESS! Draft created. ID: {draft['id']}")
-        print("AI Generated Content Preview:\n" + draft_body)
         return draft
 
     except Exception as error:
@@ -133,31 +173,21 @@ def main():
     try:
         service = build("gmail", "v1", credentials=creds)
 
-        print("Searching for BrickIntel inquiries...")
-        # Search for subject line keywords
-        query = 'subject:BrickIntel OR "Investment Tool" OR "Factor"' 
-        found_messages = search_emails(service, query)
+        print("Searching for emails...")
+        found_messages = search_emails(service)
 
         if found_messages:
             for msg in found_messages:
                 msg_details = service.users().messages().get(userId='me', id=msg['id']).execute()
-                
-                # Get Subject
                 headers = msg_details['payload']['headers']
                 subject = next((h['value'] for h in headers if h['name'] == 'Subject'), "No Subject")
-                
-                # Get Email Snippet (Body preview)
-                snippet = msg_details.get('snippet', '')
+                email_body = get_email_body(msg_details)
 
                 print(f"Found email: {subject}")
-                
-                # Draft the reply using AI
-                create_draft(service, 'me', msg['threadId'], subject, snippet)
-                
-                # Tag it so we don't reply again
+                create_draft(service, 'me', msg['threadId'], subject, email_body)
                 add_label(service, 'me', msg['id'], 'AI_PROCESSED')
         else:
-            print("No new emails found.")
+            print("No new emails found matching criteria.")
         
     except HttpError as error:
         print(f"An error occurred: {error}")
